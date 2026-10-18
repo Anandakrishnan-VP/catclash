@@ -1,0 +1,8 @@
+[phases.install]
+cmds = ["npm install"]
+
+[phases.build]
+cmds = []  # no build step needed — the server is plain JS
+
+[start]
+cmd = "node server/index.js"
