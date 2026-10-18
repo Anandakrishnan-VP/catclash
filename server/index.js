@@ -12,21 +12,52 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const server = http.createServer(app);
 
-app.use(cors());
+// Allow all origins — frontend runs on Vercel, backend runs here
+const ALLOWED_ORIGINS = [
+  'https://catclash.vercel.app',
+  /\.vercel\.app$/,     // any Vercel preview deployment
+  /\.railway\.app$/,   // Railway preview
+  'http://localhost:3000',
+  'http://localhost:5173',
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // allow non-browser requests
+    const allowed = ALLOWED_ORIGINS.some((o) =>
+      typeof o === 'string' ? o === origin : o.test(origin)
+    );
+    callback(null, allowed ? origin : false);
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  credentials: true,
+}));
 app.use(express.json());
 
 const io = new Server(server, {
   cors: {
-    origin: '*',
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      const allowed = ALLOWED_ORIGINS.some((o) =>
+        typeof o === 'string' ? o === origin : o.test(origin)
+      );
+      callback(null, allowed ? origin : false);
+    },
     methods: ['GET', 'POST'],
+    credentials: true,
   },
+  // Prefer polling first (works everywhere), upgrade to WS when possible
+  transports: ['polling', 'websocket'],
 });
 
-// Serve frontend build if dist exists
+// Health-check endpoint (used by Railway/Render uptime)
+app.get('/health', (_req, res) => res.json({ status: 'ok', game: 'Cat Clash' }));
+
+// Serve frontend build locally (for `npm start` self-hosted usage)
 const distPath = path.join(__dirname, '..', 'dist');
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
-  app.use((req, res) => {
+  app.get('*', (req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
   });
 }

@@ -12,9 +12,11 @@ class SocketClient {
     // Connect to server (configured via VITE_SERVER_URL or current host)
     const serverUrl = (import.meta.env.VITE_SERVER_URL as string) || undefined;
     this.socket = io(serverUrl, {
-      transports: ['websocket', 'polling'],
+      // Start with polling (works on all hosting), then upgrade to WS
+      transports: ['polling', 'websocket'],
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
+      withCredentials: !!serverUrl, // credentials only when cross-origin
     });
 
     this.socket.on('connect', () => {
