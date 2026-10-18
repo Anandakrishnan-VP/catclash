@@ -11,13 +11,14 @@ import { VictoryDefeatModal } from './components/VictoryDefeatModal';
 import { CollectionScreen } from './components/CollectionScreen';
 import { SettingsModal } from './components/SettingsModal';
 import { SkillSelectionModal } from './components/SkillSelectionModal';
+import { EditProfileModal } from './components/EditProfileModal';
 
 type AppView = 'MENU' | 'LOBBY' | 'BATTLE' | 'COLLECTION';
 
 export const App: React.FC = () => {
   const [view, setView] = useState<AppView>('MENU');
 
-  // User Profile
+  // Persistent User Profile
   const [profile, setProfile] = useState<UserProfile>(() => {
     try {
       const saved = localStorage.getItem('catclash_profile');
@@ -57,6 +58,7 @@ export const App: React.FC = () => {
   // Settings & Modals
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [showLoadoutModal, setShowLoadoutModal] = useState<boolean>(false);
+  const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
   const [showMobileControls, setShowMobileControls] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const isTouch = 'ontouchstart' in window || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0);
@@ -67,7 +69,7 @@ export const App: React.FC = () => {
   });
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
-  // Save profile helper
+  // Save profile helper (persists to localStorage + updates active lobby)
   const saveProfile = (newProfile: UserProfile) => {
     setProfile(newProfile);
     try {
@@ -75,7 +77,23 @@ export const App: React.FC = () => {
     } catch (e) {
       // ignore
     }
+    // If in an active room, update our name on the server
+    if (roomData) {
+      socketClient.updateLobby({ name: newProfile.name });
+    }
   };
+
+  // Prevent accidental pull-to-refresh or navigation in active session
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (view === 'LOBBY' || view === 'BATTLE') {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [view]);
 
   // Keep loadout synced when switching cat in menu
   const handleSelectCat = (catId: CatId) => {
@@ -83,7 +101,7 @@ export const App: React.FC = () => {
     setLoadout(CATS[catId]?.defaultLoadout || CATS.shadow.defaultLoadout);
   };
 
-  // Socket Room Listeners
+  // Socket Room Listeners & Session Restoration
   useEffect(() => {
     socketClient.init();
 
@@ -111,13 +129,54 @@ export const App: React.FC = () => {
         setView('LOBBY');
       }
     });
-  }, [view]);
+
+    // Attempt to restore persistent room session if user refreshed the page
+    try {
+      const savedRoomJson = sessionStorage.getItem('catclash_active_room');
+      if (savedRoomJson) {
+        const savedRoom = JSON.parse(savedRoomJson);
+        if (savedRoom?.roomCode) {
+          console.log('Restoring active bout frequency:', savedRoom.roomCode);
+          socketClient.rejoinRoom(
+            savedRoom.roomCode,
+            profile.name,
+            selectedCatId,
+            loadout,
+            profile.id
+          ).then((res) => {
+            if (res.success && res.room) {
+              setRoomData(res.room);
+              setView('LOBBY');
+            } else {
+              sessionStorage.removeItem('catclash_active_room');
+            }
+          });
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, []);
 
   // Online Flow: Create Private Room
   const handleCreateRoom = async () => {
-    const res = await socketClient.createRoom(profile.name, selectedCatId, loadout, 'rooftop');
+    const res = await socketClient.createRoom(
+      profile.name,
+      selectedCatId,
+      loadout,
+      'rooftop',
+      profile.id
+    );
     if (res.success && res.room) {
       setRoomData(res.room);
+      try {
+        sessionStorage.setItem(
+          'catclash_active_room',
+          JSON.stringify({ roomCode: res.room.roomCode, role: 'host' })
+        );
+      } catch (e) {
+        // ignore
+      }
       setView('LOBBY');
     } else {
       setAlertMessage(res.error || 'Failed to create room.');
@@ -126,9 +185,23 @@ export const App: React.FC = () => {
 
   // Online Flow: Join Private Room
   const handleJoinRoom = async (code: string) => {
-    const res = await socketClient.joinRoom(code, profile.name, selectedCatId, loadout);
+    const res = await socketClient.joinRoom(
+      code,
+      profile.name,
+      selectedCatId,
+      loadout,
+      profile.id
+    );
     if (res.success && res.room) {
       setRoomData(res.room);
+      try {
+        sessionStorage.setItem(
+          'catclash_active_room',
+          JSON.stringify({ roomCode: res.room.roomCode, role: 'guest' })
+        );
+      } catch (e) {
+        // ignore
+      }
       setView('LOBBY');
     } else {
       setAlertMessage(res.error || 'Failed to join room.');
@@ -148,7 +221,7 @@ export const App: React.FC = () => {
   const handleMatchEnd = (finalMs: MatchState) => {
     setCompletedMatchState(finalMs);
 
-    const localId = isOnlineMatch ? socketClient.socket?.id || 'p1' : 'p1';
+    const localId = isOnlineMatch ? socketClient.socket?.id || profile.id : 'p1';
     const isWinner = finalMs.stats?.winnerId === localId;
 
     // Grant XP
@@ -166,7 +239,7 @@ export const App: React.FC = () => {
         {
           date: new Date().toLocaleDateString(),
           result: isWinner ? 'VICTORY' : 'DEFEAT',
-          opponent: isOnlineMatch ? 'Online Player' : 'Training Bot',
+          opponent: isOnlineMatch ? 'Online Challenger' : 'Training Bot',
           catUsed: selectedCatId,
           duration: `${finalMs.stats?.matchDuration ?? 30}s`,
         },
@@ -182,7 +255,6 @@ export const App: React.FC = () => {
       socketClient.requestRematch();
       setWaitingForRematch(true);
     } else {
-      // Offline rematch: restart training instantly with a fresh session
       setCompletedMatchState(null);
       setActiveMatchState(null);
       setMatchSessionId((id) => id + 1);
@@ -216,6 +288,7 @@ export const App: React.FC = () => {
           onStartTraining={handleStartTraining}
           onOpenCollection={() => setView('COLLECTION')}
           onOpenSettings={() => setShowSettings(true)}
+          onEditProfile={() => setShowProfileModal(true)}
         />
       )}
 
@@ -223,8 +296,15 @@ export const App: React.FC = () => {
         <Lobby
           roomData={roomData}
           localPlayerId={socketClient.socket?.id || ''}
+          localProfileId={profile.id}
           onStartMatch={() => {}}
           onLeaveRoom={() => {
+            try {
+              sessionStorage.removeItem('catclash_active_room');
+            } catch (e) {
+              // ignore
+            }
+            socketClient.leaveRoom();
             setRoomData(null);
             setView('MENU');
           }}
@@ -236,7 +316,7 @@ export const App: React.FC = () => {
           key={`battle-${matchSessionId}`}
           isOnline={isOnlineMatch}
           arenaId={roomData?.arenaId || 'rooftop'}
-          localPlayerId={isOnlineMatch ? socketClient.socket?.id || 'p1' : 'p1'}
+          localPlayerId={isOnlineMatch ? socketClient.socket?.id || profile.id : 'p1'}
           initialMatchState={activeMatchState || undefined}
           trainingCatId={selectedCatId}
           trainingLoadout={loadout}
@@ -248,7 +328,14 @@ export const App: React.FC = () => {
           onToggleMobileControls={() => setShowMobileControls((prev) => !prev)}
           onMatchEnd={handleMatchEnd}
           onExit={() => {
-            if (isOnlineMatch) socketClient.leaveRoom();
+            if (isOnlineMatch) {
+              try {
+                sessionStorage.removeItem('catclash_active_room');
+              } catch (e) {
+                // ignore
+              }
+              socketClient.leaveRoom();
+            }
             setRoomData(null);
             setActiveMatchState(null);
             setCompletedMatchState(null);
@@ -265,11 +352,18 @@ export const App: React.FC = () => {
       {completedMatchState && (
         <VictoryDefeatModal
           matchState={completedMatchState}
-          localPlayerId={isOnlineMatch ? socketClient.socket?.id || 'p1' : 'p1'}
+          localPlayerId={isOnlineMatch ? socketClient.socket?.id || profile.id : 'p1'}
           onRematch={handleRematch}
           onChangeLoadout={() => setShowLoadoutModal(true)}
           onLeave={() => {
-            if (isOnlineMatch) socketClient.leaveRoom();
+            if (isOnlineMatch) {
+              try {
+                sessionStorage.removeItem('catclash_active_room');
+              } catch (e) {
+                // ignore
+              }
+              socketClient.leaveRoom();
+            }
             setCompletedMatchState(null);
             setRoomData(null);
             setView('MENU');
@@ -293,12 +387,27 @@ export const App: React.FC = () => {
         />
       )}
 
+      {/* EDIT PROFILE MODAL */}
+      {showProfileModal && (
+        <EditProfileModal
+          profile={profile}
+          selectedCatId={selectedCatId}
+          onSave={saveProfile}
+          onClose={() => setShowProfileModal(false)}
+        />
+      )}
+
       {/* SETTINGS MODAL */}
       {showSettings && (
         <SettingsModal
           onClose={() => setShowSettings(false)}
           showMobileControls={showMobileControls}
           setShowMobileControls={setShowMobileControls}
+          profile={profile}
+          onEditProfile={() => {
+            setShowSettings(false);
+            setShowProfileModal(true);
+          }}
         />
       )}
     </div>

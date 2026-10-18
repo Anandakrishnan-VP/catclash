@@ -1,14 +1,23 @@
 import React, { useState } from 'react';
 import { soundEngine } from '../audio/soundEngine';
-import { Volume2, VolumeX, Keyboard, Smartphone, X, Sliders, Shield } from 'lucide-react';
+import { Volume2, VolumeX, Keyboard, Smartphone, X, Sliders, Shield, User, Edit3 } from 'lucide-react';
+import { UserProfile } from '../types/game';
 
 interface Props {
   onClose: () => void;
   showMobileControls: boolean;
   setShowMobileControls: (val: boolean) => void;
+  profile?: UserProfile;
+  onEditProfile?: () => void;
 }
 
-export const SettingsModal: React.FC<Props> = ({ onClose, showMobileControls, setShowMobileControls }) => {
+export const SettingsModal: React.FC<Props> = ({
+  onClose,
+  showMobileControls,
+  setShowMobileControls,
+  profile,
+  onEditProfile,
+}) => {
   const [master, setMaster] = useState(soundEngine.masterVolume);
   const [music, setMusic] = useState(soundEngine.musicVolume);
   const [sfx, setSfx] = useState(soundEngine.sfxVolume);
@@ -59,6 +68,43 @@ export const SettingsModal: React.FC<Props> = ({ onClose, showMobileControls, se
 
         {/* Content */}
         <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+          {/* Fighter Account & Callsign Dossier */}
+          {profile && (
+            <div className="p-3.5 clip-chamfer bg-[#070514] border border-cyan-500/30 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 clip-chamfer bg-cyan-950/80 border border-cyan-400 flex items-center justify-center font-display font-black text-cyan-300">
+                  {profile.name.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-title font-bold text-sm tracking-wider uppercase text-white">
+                      {profile.name}
+                    </span>
+                    <span className="font-title font-bold text-[10px] uppercase px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-400/40">
+                      LVL {profile.level}
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-title text-neutral-400 uppercase tracking-wider block mt-0.5">
+                    Account Status: Persistent ({profile.wins}W / {profile.losses}L)
+                  </span>
+                </div>
+              </div>
+
+              {onEditProfile && (
+                <button
+                  onClick={() => {
+                    soundEngine.playClick();
+                    onEditProfile();
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 clip-chamfer glass-panel hover:glass-panel-cyan border border-cyan-500/40 text-cyan-300 hover:text-white font-title font-bold text-xs uppercase tracking-wider transition arcade-btn"
+                >
+                  <Edit3 size={13} />
+                  <span>Edit Name</span>
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Audio Controls */}
           <div className="space-y-4">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">

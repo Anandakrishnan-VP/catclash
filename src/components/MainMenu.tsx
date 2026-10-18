@@ -15,6 +15,7 @@ import {
   X,
   Sparkles,
   Zap,
+  Edit3,
 } from 'lucide-react';
 
 interface Props {
@@ -26,6 +27,7 @@ interface Props {
   onStartTraining: () => void;
   onOpenCollection: () => void;
   onOpenSettings: () => void;
+  onEditProfile: () => void;
 }
 
 export const MainMenu: React.FC<Props> = ({
@@ -37,6 +39,7 @@ export const MainMenu: React.FC<Props> = ({
   onStartTraining,
   onOpenCollection,
   onOpenSettings,
+  onEditProfile,
 }) => {
   const [showJoinModal, setShowJoinModal] = useState<boolean>(false);
   const [joinCodeInput, setJoinCodeInput] = useState<string>('');
@@ -157,14 +160,24 @@ export const MainMenu: React.FC<Props> = ({
           HEADER BAR: USER PROFILE PLATE & GLOBAL UTILITIES
          ========================================================================= */}
       <header className="relative z-20 flex items-center justify-between max-w-7xl mx-auto w-full">
-        {/* User Profile Card */}
-        <div className="flex items-center gap-3 p-2 clip-chamfer glass-panel border border-cyan-500/30">
-          <div className="w-10 h-10 clip-chamfer bg-cyan-950/80 border border-cyan-400 flex items-center justify-center font-display font-black text-cyan-300">
-            {profile.name.charAt(0)}
+        {/* User Profile Card (Clickable to Edit Callsign) */}
+        <button
+          onClick={() => {
+            soundEngine.playClick();
+            onEditProfile();
+          }}
+          className="group flex items-center gap-3 p-2 clip-chamfer glass-panel border border-cyan-500/30 hover:border-cyan-400 hover:glass-panel-cyan transition-all text-left arcade-btn"
+          title="Click to edit fighter callsign / profile"
+        >
+          <div className="relative w-10 h-10 clip-chamfer bg-cyan-950/80 border border-cyan-400 flex items-center justify-center font-display font-black text-cyan-300 group-hover:scale-105 transition-transform">
+            {profile.name.charAt(0).toUpperCase()}
+            <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-cyan-400 text-black flex items-center justify-center text-[9px] shadow-sm">
+              <Edit3 size={10} />
+            </div>
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-title font-bold text-sm tracking-wider uppercase text-white truncate max-w-[130px]">
+              <span className="font-title font-bold text-sm tracking-wider uppercase text-white truncate max-w-[130px] group-hover:text-cyan-300 transition-colors">
                 {profile.name}
               </span>
               <span className="font-title font-bold text-[10px] uppercase px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-400/40">
@@ -181,7 +194,7 @@ export const MainMenu: React.FC<Props> = ({
               </div>
             </div>
           </div>
-        </div>
+        </button>
 
         {/* Global Controls */}
         <div className="flex items-center gap-2.5">

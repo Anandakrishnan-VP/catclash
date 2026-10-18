@@ -167,10 +167,12 @@ io.on('connection', (socket) => {
   });
 
   // Create Room
+  // Create Room
   socket.on('create_room', (data, callback) => {
     const roomCode = generateRoomCode();
+    const playerId = data.playerId || socket.id;
     const player = {
-      id: socket.id,
+      id: playerId,
       socketId: socket.id,
       name: data.playerName || 'Player 1',
       catId: data.catId || 'shadow',
@@ -185,23 +187,28 @@ io.on('connection', (socket) => {
       ready: false,
       isHost: true,
       rematchRequested: false,
+      disconnected: false,
     };
 
     const room = {
       roomCode,
       hostId: socket.id,
+      hostPlayerId: playerId,
       players: { [socket.id]: player },
       arenaId: data.arenaId || 'rooftop',
       state: 'waiting',
       matchState: null,
       tickInterval: null,
+      disconnectTimers: {},
+      emptyRoomTimer: null,
     };
 
     rooms.set(roomCode, room);
     socket.join(roomCode);
     socket.roomCode = roomCode;
+    socket.playerId = playerId;
 
-    console.log(`Room created: ${roomCode} by ${socket.id}`);
+    console.log(`Room created: ${roomCode} by socket ${socket.id} (playerId: ${playerId})`);
     if (typeof callback === 'function') {
       callback({ success: true, roomCode, room: serializeRoom(room) });
     }
@@ -210,6 +217,7 @@ io.on('connection', (socket) => {
   // Join Room
   socket.on('join_room', (data, callback) => {
     const roomCode = (data.roomCode || '').trim().toUpperCase();
+    const playerId = data.playerId || socket.id;
     const room = rooms.get(roomCode);
 
     if (!room) {
@@ -219,23 +227,31 @@ io.on('connection', (socket) => {
       return;
     }
 
+    // Cancel empty room timer if someone joins
+    if (room.emptyRoomTimer) {
+      clearTimeout(room.emptyRoomTimer);
+      room.emptyRoomTimer = null;
+    }
+
     const playerKeys = Object.keys(room.players);
-    if (playerKeys.length >= 2) {
+    // If player already in room by playerId, rejoin them
+    const existing = Object.values(room.players).find((p) => p.id === playerId);
+    if (!existing && playerKeys.length >= 2) {
       if (typeof callback === 'function') {
         callback({ success: false, error: 'Room is already full (maximum 2 players).' });
       }
       return;
     }
 
-    if (room.state !== 'waiting') {
+    if (room.state !== 'waiting' && !existing) {
       if (typeof callback === 'function') {
         callback({ success: false, error: 'Match is already in progress in this room.' });
       }
       return;
     }
 
-    const player = {
-      id: socket.id,
+    const player = existing || {
+      id: playerId,
       socketId: socket.id,
       name: data.playerName || 'Player 2',
       catId: data.catId || 'fire',
@@ -250,13 +266,24 @@ io.on('connection', (socket) => {
       ready: false,
       isHost: false,
       rematchRequested: false,
+      disconnected: false,
     };
+
+    if (existing) {
+      const oldSid = player.socketId;
+      delete room.players[oldSid];
+      player.socketId = socket.id;
+      player.disconnected = false;
+      if (data.playerName) player.name = data.playerName;
+      if (data.catId) player.catId = data.catId;
+    }
 
     room.players[socket.id] = player;
     socket.join(roomCode);
     socket.roomCode = roomCode;
+    socket.playerId = playerId;
 
-    console.log(`Player ${socket.id} joined room ${roomCode}`);
+    console.log(`Player ${socket.id} (playerId: ${playerId}) joined room ${roomCode}`);
     io.to(roomCode).emit('room_updated', serializeRoom(room));
 
     if (typeof callback === 'function') {
@@ -264,7 +291,105 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Update Cat / Loadout / Arena in Lobby
+  // Rejoin Room (for page refresh, socket reconnect, or network drop)
+  socket.on('rejoin_room', (data, callback) => {
+    const roomCode = (data.roomCode || '').trim().toUpperCase();
+    const playerId = data.playerId || socket.id;
+    const room = rooms.get(roomCode);
+
+    if (!room) {
+      if (typeof callback === 'function') {
+        callback({ success: false, error: 'Room expired or closed.' });
+      }
+      return;
+    }
+
+    // Cancel disconnect timers
+    if (room.disconnectTimers && room.disconnectTimers[playerId]) {
+      clearTimeout(room.disconnectTimers[playerId]);
+      delete room.disconnectTimers[playerId];
+    }
+    if (room.emptyRoomTimer) {
+      clearTimeout(room.emptyRoomTimer);
+      room.emptyRoomTimer = null;
+    }
+
+    // Find player in room
+    let player = Object.values(room.players).find(
+      (p) => p.id === playerId || p.socketId === socket.id
+    );
+
+    if (player) {
+      const oldSid = player.socketId;
+      delete room.players[oldSid];
+      player.socketId = socket.id;
+      player.disconnected = false;
+      if (data.playerName) player.name = data.playerName;
+      if (data.catId) player.catId = data.catId;
+      if (data.loadout) player.loadout = data.loadout;
+
+      room.players[socket.id] = player;
+
+      if (room.hostId === oldSid || room.hostPlayerId === playerId) {
+        room.hostId = socket.id;
+        player.isHost = true;
+      }
+
+      // Re-map socket in matchState if in match
+      if (room.matchState) {
+        if (room.matchState.p1.id === player.id || room.matchState.p1.socketId === oldSid) {
+          room.matchState.p1.socketId = socket.id;
+        } else if (room.matchState.p2.id === player.id || room.matchState.p2.socketId === oldSid) {
+          room.matchState.p2.socketId = socket.id;
+        }
+      }
+    } else {
+      const playerKeys = Object.keys(room.players);
+      if (playerKeys.length >= 2) {
+        if (typeof callback === 'function') {
+          callback({ success: false, error: 'Room is full.' });
+        }
+        return;
+      }
+      const isHost = playerKeys.length === 0;
+      player = {
+        id: playerId,
+        socketId: socket.id,
+        name: data.playerName || (isHost ? 'Player 1' : 'Player 2'),
+        catId: data.catId || 'shadow',
+        loadout: data.loadout || {
+          basic: 'claw_slash',
+          ability1: 'shadow_projectile',
+          ability2: 'gravity_paw',
+          movement: 'shadow_teleport',
+          defensive: 'counterattack',
+          ultimate: 'shadow_realm',
+        },
+        ready: false,
+        isHost,
+        rematchRequested: false,
+        disconnected: false,
+      };
+      room.players[socket.id] = player;
+      if (isHost) {
+        room.hostId = socket.id;
+        room.hostPlayerId = playerId;
+      }
+    }
+
+    socket.join(roomCode);
+    socket.roomCode = roomCode;
+    socket.playerId = playerId;
+
+    console.log(`Player ${socket.id} (playerId: ${playerId}) successfully restored in room ${roomCode}`);
+    io.to(roomCode).emit('room_updated', serializeRoom(room));
+
+    if (typeof callback === 'function') {
+      callback({ success: true, roomCode, room: serializeRoom(room) });
+    }
+  });
+
+  // Update Cat / Loadout / Arena / Name in Lobby
   socket.on('update_lobby_player', (data) => {
     const room = rooms.get(socket.roomCode);
     if (!room) return;
@@ -272,6 +397,7 @@ io.on('connection', (socket) => {
     const player = room.players[socket.id];
     if (!player) return;
 
+    if (data.name || data.playerName) player.name = data.name || data.playerName;
     if (data.catId) player.catId = data.catId;
     if (data.loadout) player.loadout = data.loadout;
     if (typeof data.ready === 'boolean') player.ready = data.ready;
@@ -411,18 +537,61 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Leave room or return to lobby
+  // Leave room or return to lobby explicitly
   socket.on('leave_room', () => {
-    cleanupPlayerRoom(socket);
+    console.log(`Socket ${socket.id} explicitly left room ${socket.roomCode}`);
+    cleanupPlayerRoom(socket, true);
   });
 
   socket.on('disconnect', () => {
     console.log(`Socket disconnected: ${socket.id}`);
-    cleanupPlayerRoom(socket);
+    handleSocketDisconnect(socket);
   });
 });
 
-function cleanupPlayerRoom(socket) {
+function handleSocketDisconnect(socket) {
+  const roomCode = socket.roomCode;
+  if (!roomCode) return;
+
+  const room = rooms.get(roomCode);
+  if (!room) return;
+
+  const player = room.players[socket.id];
+  if (!player) return;
+
+  player.disconnected = true;
+  room.disconnectTimers = room.disconnectTimers || {};
+  const playerId = player.id;
+
+  console.log(`Player ${playerId} temporarily disconnected from room ${roomCode}. Starting 60s grace period...`);
+
+  // 60-second grace window to allow reconnect, transport switch, or page reload
+  if (room.disconnectTimers[playerId]) clearTimeout(room.disconnectTimers[playerId]);
+  room.disconnectTimers[playerId] = setTimeout(() => {
+    const currentRoom = rooms.get(roomCode);
+    if (!currentRoom) return;
+
+    // Check if player is still disconnected
+    const currentEntry = Object.entries(currentRoom.players).find(
+      ([sid, p]) => (p.id === playerId || sid === socket.id) && p.disconnected
+    );
+
+    if (currentEntry) {
+      console.log(`Grace period expired for player ${playerId} in room ${roomCode}. Cleaning up.`);
+      cleanupPlayerRoom(socket, true);
+    }
+  }, 60000);
+
+  // If in match, inform the other player that opponent is reconnecting
+  if (room.state === 'in_match') {
+    io.to(roomCode).emit('opponent_disconnected', {
+      message: 'Opponent disconnected. Holding session for 60s...',
+      room: serializeRoom(room),
+    });
+  }
+}
+
+function cleanupPlayerRoom(socket, force = false) {
   const roomCode = socket.roomCode;
   if (!roomCode) return;
 
@@ -437,20 +606,33 @@ function cleanupPlayerRoom(socket) {
   const remainingPlayers = Object.values(room.players);
 
   if (remainingPlayers.length === 0) {
-    // Delete empty room
-    rooms.delete(roomCode);
-    console.log(`Room ${roomCode} deleted`);
+    if (force) {
+      rooms.delete(roomCode);
+      console.log(`Room ${roomCode} deleted immediately (forced exit)`);
+    } else {
+      if (room.emptyRoomTimer) clearTimeout(room.emptyRoomTimer);
+      room.emptyRoomTimer = setTimeout(() => {
+        if (rooms.has(roomCode)) {
+          const checkRoom = rooms.get(roomCode);
+          if (Object.keys(checkRoom.players).length === 0) {
+            rooms.delete(roomCode);
+            console.log(`Empty room ${roomCode} deleted after 60s grace`);
+          }
+        }
+      }, 60000);
+    }
   } else {
-    // Notify other player that opponent disconnected
+    // Notify other player that opponent left
     remainingPlayers[0].isHost = true;
     remainingPlayers[0].ready = false;
     room.state = 'waiting';
     room.matchState = null;
 
     io.to(roomCode).emit('opponent_disconnected', {
-      message: 'Opponent disconnected from the match.',
+      message: 'Opponent departed the session.',
       room: serializeRoom(room),
     });
+    io.to(roomCode).emit('room_updated', serializeRoom(room));
   }
 }
 

@@ -22,11 +22,12 @@ import {
 interface Props {
   roomData: RoomData;
   localPlayerId: string;
+  localProfileId?: string;
   onStartMatch: () => void;
   onLeaveRoom: () => void;
 }
 
-export const Lobby: React.FC<Props> = ({ roomData, localPlayerId, onStartMatch, onLeaveRoom }) => {
+export const Lobby: React.FC<Props> = ({ roomData, localPlayerId, localProfileId, onStartMatch, onLeaveRoom }) => {
   const [copied, setCopied] = useState<boolean>(false);
   const [showLoadoutModal, setShowLoadoutModal] = useState<boolean>(false);
   const [showArenaPicker, setShowArenaPicker] = useState<boolean>(false);
@@ -35,8 +36,13 @@ export const Lobby: React.FC<Props> = ({ roomData, localPlayerId, onStartMatch, 
   const p1 = players[0];
   const p2 = players.length > 1 ? players[1] : null;
 
-  const isLocalHost = p1?.socketId === localPlayerId;
-  const localPlayer = players.find((p) => p.socketId === localPlayerId) || p1;
+  const isLocalHost = Boolean(
+    (localProfileId && p1?.id === localProfileId) || p1?.socketId === localPlayerId
+  );
+  const localPlayer =
+    players.find(
+      (p) => (localProfileId && p.id === localProfileId) || p.socketId === localPlayerId
+    ) || p1;
 
   const bothReady = Boolean(p1?.ready && p2?.ready);
   const catP1 = CATS[p1?.catId] || CATS.shadow;

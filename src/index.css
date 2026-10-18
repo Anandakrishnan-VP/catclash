@@ -46,6 +46,11 @@
   -webkit-touch-callout: none;
 }
 
+html, body, #root {
+  overscroll-behavior: none;
+  overscroll-behavior-y: contain;
+}
+
 body {
   margin: 0;
   padding: 0;

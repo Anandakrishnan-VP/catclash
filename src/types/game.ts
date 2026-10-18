@@ -231,6 +231,7 @@ export interface RoomPlayer {
   ready: boolean;
   isHost: boolean;
   rematchRequested?: boolean;
+  disconnected?: boolean;
 }
 
 export interface RoomData {

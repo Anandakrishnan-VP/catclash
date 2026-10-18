@@ -52,14 +52,15 @@ class SocketClient {
     playerName: string,
     catId: CatId,
     loadout: PlayerLoadout,
-    arenaId: ArenaId
+    arenaId: ArenaId,
+    playerId?: string
   ): Promise<{ success: boolean; roomCode?: string; room?: RoomData; error?: string }> {
     this.init();
     return new Promise((resolve) => {
       if (!this.socket) return resolve({ success: false, error: 'Socket not initialized' });
       this.socket.emit(
         'create_room',
-        { playerName, catId, loadout, arenaId },
+        { playerName, catId, loadout, arenaId, playerId },
         (res: { success: boolean; roomCode?: string; room?: RoomData; error?: string }) => {
           resolve(res);
         }
@@ -71,14 +72,15 @@ class SocketClient {
     roomCode: string,
     playerName: string,
     catId: CatId,
-    loadout: PlayerLoadout
+    loadout: PlayerLoadout,
+    playerId?: string
   ): Promise<{ success: boolean; roomCode?: string; room?: RoomData; error?: string }> {
     this.init();
     return new Promise((resolve) => {
       if (!this.socket) return resolve({ success: false, error: 'Socket not initialized' });
       this.socket.emit(
         'join_room',
-        { roomCode, playerName, catId, loadout },
+        { roomCode, playerName, catId, loadout, playerId },
         (res: { success: boolean; roomCode?: string; room?: RoomData; error?: string }) => {
           resolve(res);
         }
@@ -86,7 +88,27 @@ class SocketClient {
     });
   }
 
-  public updateLobby(data: { catId?: CatId; loadout?: PlayerLoadout; ready?: boolean; arenaId?: ArenaId }) {
+  public rejoinRoom(
+    roomCode: string,
+    playerName: string,
+    catId: CatId,
+    loadout: PlayerLoadout,
+    playerId?: string
+  ): Promise<{ success: boolean; roomCode?: string; room?: RoomData; error?: string }> {
+    this.init();
+    return new Promise((resolve) => {
+      if (!this.socket) return resolve({ success: false, error: 'Socket not initialized' });
+      this.socket.emit(
+        'rejoin_room',
+        { roomCode, playerName, catId, loadout, playerId },
+        (res: { success: boolean; roomCode?: string; room?: RoomData; error?: string }) => {
+          resolve(res);
+        }
+      );
+    });
+  }
+
+  public updateLobby(data: { name?: string; catId?: CatId; loadout?: PlayerLoadout; ready?: boolean; arenaId?: ArenaId }) {
     if (!this.socket) return;
     this.socket.emit('update_lobby_player', data);
   }
